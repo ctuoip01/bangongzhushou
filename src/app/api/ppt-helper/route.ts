@@ -4,6 +4,17 @@ import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
+// 服务端日志
+function log(level: 'info' | 'error', message: string, meta?: object) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level, service: 'ppt-helper', message, ...meta };
+  if (level === 'error') {
+    console.error(JSON.stringify(logEntry));
+  } else {
+    console.log(JSON.stringify(logEntry));
+  }
+}
+
 const SYSTEM_PROMPT = `你是一位专业的PPT大纲设计专家，擅长将报告内容转化为结构清晰、逻辑合理的PPT演示文稿。
 
 ## 工作原则
@@ -27,8 +38,7 @@ const SYSTEM_PROMPT = `你是一位专业的PPT大纲设计专家，擅长将报
       "notes": "备注说明（可选）",
       "layout": "布局类型：title/content/two-column/chart/closing"
     }
-  ],
-  "exportFormats": ["Markdown", "大纲文本"]
+  ]
 }
 
 ## 布局类型说明
@@ -41,15 +51,22 @@ const SYSTEM_PROMPT = `你是一位专业的PPT大纲设计专家，擅长将报
 请直接输出JSON，不要添加任何额外说明。`;
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
     const { content, pptTitle, style } = await request.json();
 
-    if (!content || content.trim().length === 0) {
+    // 参数验证
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      log('info', 'Invalid request: empty content');
       return NextResponse.json(
         { error: "请提供需要转换的报告内容" },
         { status: 400 }
       );
     }
+
+    const contentLength = content.trim().length;
+    log('info', 'PPT generation started', { contentLength, pptTitle, style });
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config();
@@ -92,8 +109,12 @@ ${content}
             }
           }
           controller.close();
+          
+          const duration = Date.now() - startTime;
+          log('info', 'PPT generation completed', { duration, contentLength });
         } catch (error) {
           controller.error(error);
+          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
         }
       },
     });
@@ -107,7 +128,7 @@ ${content}
       },
     });
   } catch (error) {
-    console.error("PPT generate error:", error);
+    log('error', 'PPT generation failed', { error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json(
       { error: "PPT生成服务暂时不可用，请稍后重试" },
       { status: 500 }

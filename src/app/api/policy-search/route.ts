@@ -4,16 +4,34 @@ import { SearchClient, Config, HeaderUtils, LLMClient } from "coze-coding-dev-sd
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// 服务端日志
+function log(level: 'info' | 'error', message: string, meta?: object) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level, service: 'policy-search', message, ...meta };
+  if (level === 'error') {
+    console.error(JSON.stringify(logEntry));
+  } else {
+    console.log(JSON.stringify(logEntry));
+  }
+}
+
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
     const { query, searchType, timeRange, count } = await request.json();
 
-    if (!query || query.trim().length === 0) {
+    // 参数验证
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      log('info', 'Invalid request: empty query');
       return NextResponse.json(
         { error: "请输入搜索关键词" },
         { status: 400 }
       );
     }
+
+    const queryLength = query.trim().length;
+    log('info', 'Policy search started', { queryLength, searchType, timeRange });
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config();
@@ -35,6 +53,10 @@ export async function POST(request: NextRequest) {
       needSummary: true,
       needContent: false,
       needUrl: true,
+    });
+
+    log('info', 'Search query executed', { 
+      resultsCount: searchResponse.web_items?.length || 0 
     });
 
     // 使用 LLM 智能聚合结果
@@ -97,8 +119,12 @@ ${item.summary ? `AI摘要：${item.summary}` : ''}
           
           controller.enqueue(encoder.encode(`[AI_SUMMARY_END]`));
           controller.close();
+          
+          const duration = Date.now() - startTime;
+          log('info', 'Policy search completed', { duration, queryLength });
         } catch (error) {
           controller.error(error);
+          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
         }
       },
     });
@@ -112,7 +138,7 @@ ${item.summary ? `AI摘要：${item.summary}` : ''}
       },
     });
   } catch (error) {
-    console.error("Policy search error:", error);
+    log('error', 'Policy search failed', { error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json(
       { error: "搜索服务暂时不可用，请稍后重试" },
       { status: 500 }

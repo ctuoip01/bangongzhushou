@@ -4,6 +4,24 @@ import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// 服务端日志
+function log(level: 'info' | 'error', message: string, meta?: object) {
+  const timestamp = new Date().toISOString();
+  const logEntry = {
+    timestamp,
+    level,
+    service: 'document-check',
+    message,
+    ...meta,
+  };
+  
+  if (level === 'error') {
+    console.error(JSON.stringify(logEntry));
+  } else {
+    console.log(JSON.stringify(logEntry));
+  }
+}
+
 const SYSTEM_PROMPT = `你是政府公文格式审核专家，精通《党政机关公文格式》（GB/T 9704-2012）国家标准和通用商务文档规范。
 
 ## 检查维度
@@ -46,15 +64,27 @@ const SYSTEM_PROMPT = `你是政府公文格式审核专家，精通《党政机
 }`;
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
     const { content, mode } = await request.json();
 
-    if (!content || content.trim().length === 0) {
+    // 参数验证
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      log('info', 'Invalid request: empty content', { mode });
       return NextResponse.json(
         { error: "请提供需要检查的文档内容" },
         { status: 400 }
       );
     }
+
+    const contentLength = content.trim().length;
+    const modeValue = mode || 'both';
+    
+    log('info', 'Document check started', { 
+      contentLength, 
+      mode: modeValue 
+    });
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config();
@@ -87,8 +117,19 @@ export async function POST(request: NextRequest) {
             }
           }
           controller.close();
+          
+          const duration = Date.now() - startTime;
+          log('info', 'Document check completed successfully', { 
+            duration,
+            contentLength,
+            mode: modeValue 
+          });
         } catch (error) {
           controller.error(error);
+          log('error', 'Stream error', { 
+            error: error instanceof Error ? error.message : 'Unknown error',
+            duration: Date.now() - startTime 
+          });
         }
       },
     });
@@ -102,7 +143,12 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Document check error:", error);
+    const duration = Date.now() - startTime;
+    log('error', 'Document check failed', { 
+      error: error instanceof Error ? error.message : 'Unknown error',
+      duration 
+    });
+    
     return NextResponse.json(
       { error: "文档校验服务暂时不可用，请稍后重试" },
       { status: 500 }

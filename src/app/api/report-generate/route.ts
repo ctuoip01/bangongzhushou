@@ -4,6 +4,17 @@ import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+// 服务端日志
+function log(level: 'info' | 'error', message: string, meta?: object) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level, service: 'report-generate', message, ...meta };
+  if (level === 'error') {
+    console.error(JSON.stringify(logEntry));
+  } else {
+    console.log(JSON.stringify(logEntry));
+  }
+}
+
 const SYSTEM_PROMPT = `你是一位专业的咨询报告撰写专家，擅长撰写政策研究、市场分析、投资尽调等各类咨询报告。
 
 ## 能力说明
@@ -28,15 +39,24 @@ const SYSTEM_PROMPT = `你是一位专业的咨询报告撰写专家，擅长撰
 - 结论展望：总结及未来展望`;
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
     const { outline, reportType, title } = await request.json();
 
-    if (!outline || outline.trim().length === 0) {
+    // 参数验证
+    if (!outline || typeof outline !== 'string' || outline.trim().length === 0) {
+      log('info', 'Invalid request: empty outline');
       return NextResponse.json(
         { error: "请提供报告大纲" },
         { status: 400 }
       );
     }
+
+    const outlineLength = outline.trim().length;
+    const reportTitle = title || '未命名报告';
+    
+    log('info', 'Report generation started', { outlineLength, reportType, reportTitle });
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config();
@@ -52,7 +72,7 @@ export async function POST(request: NextRequest) {
 
     const prompt = `${typeContext}
 
-请根据以下大纲，为报告"${title || '未命名报告'}"生成详细内容：
+请根据以下大纲，为报告"${reportTitle}"生成详细内容：
 
 ${outline}
 
@@ -79,8 +99,12 @@ ${outline}
             }
           }
           controller.close();
+          
+          const duration = Date.now() - startTime;
+          log('info', 'Report generation completed', { duration, outlineLength, reportTitle });
         } catch (error) {
           controller.error(error);
+          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
         }
       },
     });
@@ -94,7 +118,7 @@ ${outline}
       },
     });
   } catch (error) {
-    console.error("Report generate error:", error);
+    log('error', 'Report generation failed', { error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json(
       { error: "报告生成服务暂时不可用，请稍后重试" },
       { status: 500 }
