@@ -1,65 +1,136 @@
-# 项目上下文
+# 智研助手 - 咨询报告一站式创作平台
 
-### 版本技术栈
+## 项目概述
 
-- **Framework**: Next.js 16 (App Router)
-- **Core**: React 19
-- **Language**: TypeScript 5
-- **UI 组件**: shadcn/ui (基于 Radix UI)
-- **Styling**: Tailwind CSS 4
+智研助手是一个面向咨询公司的 AI 效率工具平台，提供文档格式校验、内容生成、政策搜索、PPT助手四大核心功能。
+
+## 技术栈
+
+- **框架**: Next.js 16 (App Router)
+- **核心**: React 19
+- **语言**: TypeScript 5
+- **UI组件**: shadcn/ui (基于 Radix UI)
+- **样式**: Tailwind CSS 4
+- **AI能力**: coze-coding-dev-sdk (LLM + Web Search)
 
 ## 目录结构
 
 ```
-├── public/                 # 静态资源
-├── scripts/                # 构建与启动脚本
-│   ├── build.sh            # 构建脚本
-│   ├── dev.sh              # 开发环境启动脚本
-│   ├── prepare.sh          # 预处理脚本
-│   └── start.sh            # 生产环境启动脚本
 ├── src/
-│   ├── app/                # 页面路由与布局
-│   ├── components/ui/      # Shadcn UI 组件库
-│   ├── hooks/              # 自定义 Hooks
-│   ├── lib/                # 工具库
-│   │   └── utils.ts        # 通用工具函数 (cn)
-│   └── server.ts           # 自定义服务端入口
-├── next.config.ts          # Next.js 配置
-├── package.json            # 项目依赖管理
-└── tsconfig.json           # TypeScript 配置
+│   ├── app/
+│   │   ├── page.tsx                 # 首页
+│   │   ├── layout.tsx               # 根布局
+│   │   ├── globals.css              # 全局样式
+│   │   ├── document-check/          # 文档格式校验
+│   │   ├── report-generate/         # 报告内容生成
+│   │   ├── policy-search/           # 政策搜索聚合
+│   │   ├── ppt-helper/             # PPT助手
+│   │   └── api/                    # API路由
+│   │       ├── document-check/     # 文档校验API
+│   │       ├── report-generate/    # 报告生成API
+│   │       ├── policy-search/      # 政策搜索API
+│   │       └── ppt-helper/         # PPT助手API
+│   └── components/ui/              # shadcn/ui组件库
+├── .coze                          # 项目配置
+├── package.json
+└── tsconfig.json
 ```
 
-- 项目文件（如 app 目录、pages 目录、components 等）默认初始化到 `src/` 目录下。
+## 功能模块
 
-## 包管理规范
+### 1. 文档格式校验 (`/document-check`)
 
-**仅允许使用 pnpm** 作为包管理器，**严禁使用 npm 或 yarn**。
-**常用命令**：
-- 安装依赖：`pnpm add <package>`
-- 安装开发依赖：`pnpm add -D <package>`
-- 安装所有依赖：`pnpm install`
-- 移除依赖：`pnpm remove <package>`
+**功能**: 自动检查党政公文与商务文档格式合规性
 
-## 开发规范
+**检查维度**:
+- 标题格式（发文机关+关于+事项+文种）
+- 发文字号格式（×〔2026〕×号）
+- 主送机关顶格规范
+- 正文层级结构（一、/（一）/ 1.）
+- 附件格式标注
+- 落款右对齐规范
+- 字体字号标准
 
-### 编码规范
+**API**: `POST /api/document-check`
 
-- 默认按 TypeScript `strict` 心智写代码；优先复用当前作用域已声明的变量、函数、类型和导入，禁止引用未声明标识符或拼错变量名。
-- 禁止隐式 `any` 和 `as any`；函数参数、返回值、解构项、事件对象、`catch` 错误在使用前应有明确类型或先完成类型收窄，并清理未使用的变量和导入。
+### 2. 报告内容生成 (`/report-generate`)
 
-### next.config 配置规范
+**功能**: 根据大纲智能扩写咨询报告章节
 
-- 配置的路径不要写死绝对路径，必须使用 path.resolve(__dirname, ...)、import.meta.dirname 或 process.cwd() 动态拼接。
+**支持类型**:
+- 综合性咨询报告
+- 政策研究报告
+- 市场分析报告
+- 投资尽调报告
 
-### Hydration 问题防范
+**API**: `POST /api/report-generate`
 
-1. 严禁在 JSX 渲染逻辑中直接使用 typeof window、Date.now()、Math.random() 等动态数据。**必须使用 'use client' 并配合 useEffect + useState 确保动态内容仅在客户端挂载后渲染**；同时严禁非法 HTML 嵌套（如 <p> 嵌套 <div>）。
-2. **禁止使用 head 标签**，优先使用 metadata，详见文档：https://nextjs.org/docs/app/api-reference/functions/generate-metadata
-   1. 三方 CSS、字体等资源可在 `globals.css` 中顶部通过 `@import` 引入或使用 next/font
-   2. preload, preconnect, dns-prefetch 通过 ReactDOM 的 preload、preconnect、dns-prefetch 方法引入
-   3. json-ld 可阅读 https://nextjs.org/docs/app/guides/json-ld
+### 3. 政策搜索聚合 (`/policy-search`)
 
-## UI 设计与组件规范 (UI & Styling Standards)
+**功能**: 实时检索行业动态与政策文件
 
-- 模板默认预装核心组件库 `shadcn/ui`，位于`src/components/ui/`目录下
-- Next.js 项目**必须默认**采用 shadcn/ui 组件、风格和规范，**除非用户指定用其他的组件和规范。**
+**特性**:
+- 支持政策文件/行业动态筛选
+- 多时间范围筛选（1月/3月/6月/1年）
+- AI智能摘要聚合
+- 权威来源标注
+
+**API**: `POST /api/policy-search`
+
+### 4. PPT助手 (`/ppt-helper`)
+
+**功能**: 将报告内容转换为PPT大纲
+
+**支持风格**:
+- 学术专业风格
+- 正式商务风格
+- 创意活力风格
+
+**输出**:
+- Markdown大纲
+- 结构化幻灯片列表
+- 预览功能
+
+**API**: `POST /api/ppt-helper`
+
+## 开发命令
+
+```bash
+# 安装依赖
+pnpm install
+
+# 开发环境
+pnpm dev
+
+# 构建
+pnpm build
+
+# 类型检查
+pnpm ts-check
+
+# 代码检查
+pnpm lint
+```
+
+## 环境变量
+
+| 变量名 | 说明 |
+|--------|------|
+| `DEPLOY_RUN_PORT` | 服务端口（默认5000） |
+| `COZE_PROJECT_DOMAIN_DEFAULT` | 访问域名 |
+
+## AI集成
+
+本项目使用 `coze-coding-dev-sdk` 集成 AI 能力：
+
+- **LLM**: 用于文档校验、内容生成、PPT大纲设计
+- **Web Search**: 用于政策搜索与信息检索
+
+所有AI调用均在后端API路由中执行，支持流式输出。
+
+## 注意事项
+
+1. 所有API端点仅限后端使用，切勿在客户端直接调用SDK
+2. 文档校验遵循 GB/T 9704-2012 国家标准
+3. 支持党政公文和商务文档双模式校验
+4. 政策搜索支持实时Web检索和AI摘要聚合
