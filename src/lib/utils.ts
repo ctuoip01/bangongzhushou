@@ -38,7 +38,7 @@ export function extractJson(text: string): object | null {
 /**
  * 解析搜索结果
  */
-export function parseSearchResults(content: string): { items: any[]; summary?: string } {
+export function parseSearchResults(content: string): { items: Record<string, unknown>[]; summary?: string } {
   const resultsMatch = content.match(
     new RegExp(`${STREAM_MARKERS.SEARCH_RESULTS_START}([\\s\\S]*?)${STREAM_MARKERS.SEARCH_RESULTS_END}`)
   );
@@ -179,7 +179,7 @@ export function getAuthBadgeVariant(level: number): 'default' | 'secondary' | 'o
 /**
  * 防抖函数
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
