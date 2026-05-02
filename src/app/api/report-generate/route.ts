@@ -1,127 +1,255 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import type { ChapterTemplate } from '@/lib/report-engine';
+import { getTemplate } from '@/lib/report-engine';
+import { createLogger } from '@/lib/logger';
+import { pushSseEvent, type SseEventType } from '@/lib/sse';
+import { createStream } from '@/lib/ai-client';
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 180;
 
-// 服务端日志
-function log(level: 'info' | 'error', message: string, meta?: object) {
-  const timestamp = new Date().toISOString();
-  const logEntry = { timestamp, level, service: 'report-generate', message, ...meta };
-  if (level === 'error') {
-    console.error(JSON.stringify(logEntry));
-  } else {
-    console.log(JSON.stringify(logEntry));
-  }
+const log = createLogger('report-generate');
+
+function buildChapterPrompt(chapter: ChapterTemplate, contextInfo: string): string {
+  return `请撰写报告的「${chapter.title}」这一章节。
+
+## 写作要求
+${chapter.writingGuide}
+
+## 字数要求
+建议 ${chapter.suggestedWords}-${chapter.maxWords || chapter.suggestedWords * 1.5} 字
+
+## 输出格式
+- 直接输出正文内容，不要输出章节标题（标题会由系统自动添加）
+- 使用标准层级格式（一、/（一）/ 1.）
+- 内容要专业、详实、有深度，避免空洞表述
+
+## 参考上下文
+${contextInfo}
+
+请开始撰写：`;
 }
 
-const SYSTEM_PROMPT = `你是一位专业的咨询报告撰写专家，擅长撰写政策研究、市场分析、投资尽调等各类咨询报告。
+function getSystemPrompt(reportType: string): string {
+  return `你是一位专业的咨询报告撰写专家，擅长撰写${reportType}。
 
-## 能力说明
-1. 根据用户提供的目录大纲，自动扩写完整的报告章节内容
-2. 内容专业、逻辑严谨、数据支撑有力
-3. 严格遵循咨询行业报告撰写规范
-4. 格式规范：使用标准层级（一、/（一）/ 1.）
+## 核心能力
+1. 结构化表达：严格遵循标准层级格式（一、/（一）/ 1./(1)/①）
+2. 数据驱动：引用数据时标注来源，使用规范表述方式
+3. 专业深度：每个观点有论据支撑，避免空泛套话
+4. 行业术语：正确使用行业专业术语
 
-## 输出要求
-1. 直接输出内容，不添加额外说明
-2. 内容要专业、详实、有深度
-3. 每个章节要有实质性内容，不能空洞
-4. 如需数据支撑，使用"根据公开资料显示"、"据XX机构统计"等表述
-5. 保持专业咨询报告的写作风格
+## 输出规则
+1. 直接输出正文内容，不添加额外说明文字
+2. 不输出章节标题（由系统自动添加）
+3. 保持段落之间逻辑连贯
+4. 使用规范的中文标点符号
+5. 数字使用阿拉伯数字，百分比用%符号`;
+}
 
-## 章节类型参考
-- 执行摘要：简明扼要概括核心观点
-- 背景介绍：交代研究背景、行业现状
-- 市场分析：市场规模、竞争格局、发展趋势
-- 政策解读：相关政策梳理及影响分析
-- 建议措施：针对问题的具体建议
-- 结论展望：总结及未来展望`;
+// ========== SSE 响应头常量 ==========
+const SSE_HEADERS = {
+  "Content-Type": "text/event-stream; charset=utf-8",
+  "Cache-Control": "no-cache",
+  "Connection": "keep-alive",
+  "X-Accel-Buffering": "no",
+};
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  
-  try {
-    const { outline, reportType, title } = await request.json();
 
-    // 参数验证
-    if (!outline || typeof outline !== 'string' || outline.trim().length === 0) {
-      log('info', 'Invalid request: empty outline');
-      return NextResponse.json(
-        { error: "请提供报告大纲" },
-        { status: 400 }
+  try {
+    const body = await request.json();
+    const {
+      mode,
+      templateId,
+      chapters,
+      title,
+      coverData,
+      globalContext,
+    } = body;
+
+    // 模式1：单章生成
+    if (mode === 'chapter') {
+      const { chapterId, chapterTitle, writingGuide, suggestedWords } = body;
+      if (!chapterTitle?.trim()) {
+        return NextResponse.json({ error: '缺少章节信息' }, { status: 400 });
+      }
+      log('info', 'Single chapter generation', { chapterId, chapterTitle });
+      return await streamSingleChapter(
+        chapterTitle, writingGuide || '', suggestedWords || 800, globalContext || '', request.headers,
       );
     }
 
-    const outlineLength = outline.trim().length;
-    const reportTitle = title || '未命名报告';
-    
-    log('info', 'Report generation started', { outlineLength, reportType, reportTitle });
+    // 模式2：全篇顺序生成
+    if (mode === 'full') {
+      if (!chapters || !Array.isArray(chapters) || chapters.length === 0) {
+        return NextResponse.json({ error: '请提供要生成的章节列表' }, { status: 400 });
+      }
+      log('info', 'Full report generation', { chapterCount: chapters.length, templateId, title: title || '' });
+      return await streamFullReport(chapters, title, globalContext || '', request.headers);
+    }
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const client = new LLMClient(config, customHeaders);
+    // 模式3：兼容旧接口 — 纯大纲模式
+    const { outline, reportType } = body;
+    if (!outline || typeof outline !== 'string' || outline.trim().length === 0) {
+      return NextResponse.json({ error: '请提供报告大纲或选择模板后生成' }, { status: 400 });
+    }
 
-    const typeContext = reportType === 'policy' 
-      ? '这是一份政策研究报告，请注重政策梳理、影响分析和建议措施。'
-      : reportType === 'market'
-      ? '这是一份市场分析报告，请注重市场规模、竞争格局、发展趋势等分析。'
-      : reportType === 'due-diligence'
-      ? '这是一份投资尽调报告，请注重企业基本面、财务状况、风险评估等。'
-      : '这是一份综合性咨询报告，请注重专业性和实用性。';
+    log('info', 'Legacy outline generation', { outlineLength: outline.trim().length });
 
-    const prompt = `${typeContext}
+    const typeMap: Record<string, string> = {
+      policy: '政策研究报告',
+      market: '市场分析报告',
+      'due-diligence': '投资尽调报告',
+    };
+    const typeLabel = typeMap[reportType] || '综合性咨询报告';
 
-请根据以下大纲，为报告"${reportTitle}"生成详细内容：
-
-${outline}
-
-请按章节逐一扩写，每个章节要有足够的内容量，保持专业咨询报告的写作风格。`;
-
-    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: prompt }
+    const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+      { role: 'system', content: getSystemPrompt(typeLabel) },
+      { role: 'user', content: `这是一份${typeLabel}。请根据以下大纲扩写完整内容：\n\n${outline}` },
     ];
 
-    // 使用流式输出
-    const stream = client.stream(messages, {
-      model: "doubao-seed-2-0-pro-260215",
-      temperature: 0.7,
-    });
+    return streamLLM(messages, request.headers);
 
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of stream) {
-            if (chunk.content) {
-              controller.enqueue(encoder.encode(chunk.content.toString()));
-            }
-          }
-          controller.close();
-          
-          const duration = Date.now() - startTime;
-          log('info', 'Report generation completed', { duration, outlineLength, reportTitle });
-        } catch (error) {
-          controller.error(error);
-          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
-        }
-      },
-    });
-
-    return new Response(readable, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      },
-    });
   } catch (error) {
-    log('error', 'Report generation failed', { error: error instanceof Error ? error.message : 'Unknown' });
-    return NextResponse.json(
-      { error: "报告生成服务暂时不可用，请稍后重试" },
-      { status: 500 }
-    );
+    const errMsg = error instanceof Error ? error.message : 'Unknown';
+    log('error', 'Report generation failed', { error: errMsg });
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
+}
+
+// ========== 流式辅助函数（统一 SSE） ==========
+
+async function streamLLM(
+  messages: Array<{ role: 'system' | 'user'; content: string }>,
+  requestHeaders: Headers,
+) {
+  const encoder = new TextEncoder();
+  const stream = createStream(requestHeaders, messages, {
+    model: "doubao-seed-2-0-pro-260215",
+    temperature: 0.7,
+  });
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of stream) {
+          if (chunk.content) {
+            controller.enqueue(encoder.encode(chunk.content));
+          }
+        }
+        pushSseEvent(controller, 'done' as SseEventType, { type: 'done' });
+        controller.close();
+      } catch (error) {
+        pushSseEvent(controller, 'error' as SseEventType, { message: error instanceof Error ? error.message : 'Unknown' });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(readable, { headers: SSE_HEADERS });
+}
+
+async function streamSingleChapter(
+  chapterTitle: string,
+  writingGuide: string,
+  suggestedWords: number,
+  context: string,
+  requestHeaders: Headers,
+) {
+  const guideText = writingGuide ? `\n## 写作指引\n${writingGuide}` : '';
+  const wordHint = `建议 ${suggestedWords}-${Math.round(suggestedWords * 1.5)} 字`;
+
+  const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+    { role: 'system', content: getSystemPrompt('咨询报告') },
+    { role: 'user', content: `请撰写以下章节内容：\n\n【章节】${chapterTitle}\n${wordHint}${guideText}\n\n${context ? `已生成的上文参考：\n${context}\n\n` : ''}` },
+  ];
+
+  return streamLLM(messages, requestHeaders);
+}
+
+async function streamFullReport(
+  chapters: Array<{ id: string; title: string; level: number; writingGuide?: string; suggestedWords?: number }>,
+  reportTitle: string,
+  globalContext: string,
+  requestHeaders: Headers,
+) {
+  const encoder = new TextEncoder();
+  const totalChapters = chapters.length;
+  const fnStartTime = Date.now();
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      let accumulatedContext = globalContext;
+
+      try {
+        for (let i = 0; i < totalChapters; i++) {
+          const ch = chapters[i];
+          const chNum = i + 1;
+
+          // event: chapter — 章节元信息
+          pushSseEvent(controller, 'chapter' as SseEventType, {
+            num: chNum,
+            total: totalChapters,
+            id: ch.id,
+            title: ch.title,
+          });
+
+          // event: progress — 进度更新
+          pushSseEvent(controller, 'progress' as SseEventType, {
+            current: chNum,
+            total: totalChapters,
+            phase: `正在生成第 ${chNum}/${totalChapters} 章：${ch.title}`,
+          });
+
+          const guideText = ch.writingGuide ? `\n写作指引：${ch.writingGuide}` : '';
+          const words = ch.suggestedWords || 800;
+
+          const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+            { role: 'system', content: getSystemPrompt('咨询报告') },
+            { role: 'user', content: `请撰写第${chNum}章「${ch.title}」。\n字数要求：${words}-${Math.round(words * 1.5)}字。\n${guideText}\n\n${accumulatedContext ? `前文摘要（用于保持逻辑连贯）：\n${accumulatedContext.slice(-1500)}\n\n` : ''}\n请直接输出该章节的正文内容：` },
+          ];
+
+          try {
+            const stream = createStream(requestHeaders, messages, {
+              model: "doubao-seed-2-0-pro-260215",
+              temperature: 0.7,
+            });
+
+            let chapterContent = '';
+            for await (const chunk of stream) {
+              if (chunk.content) {
+                const text = chunk.content;
+                chapterContent += text;
+                // event: content — 正文片段
+                controller.enqueue(encoder.encode(text));
+              }
+            }
+
+            accumulatedContext += `\n---\n第${chNum}章 ${ch.title}:\n${chapterContent.slice(-2000)}`;
+            log('info', `Chapter ${chNum}/${totalChapters} done`, { id: ch.id, charsWritten: chapterContent.length });
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            pushSseEvent(controller, 'error' as SseEventType, {
+              message: `章节"${ch.title}"生成失败`,
+              detail: errMsg,
+              recoverable: true,
+            });
+            log('error', `Chapter ${chNum} failed`, { error: errMsg });
+          }
+        }
+
+        pushSseEvent(controller, 'done' as SseEventType, { type: 'done' });
+        controller.close();
+        log('info', 'Full report completed', { duration: Date.now() - fnStartTime, totalChapters });
+      } catch (error) {
+        pushSseEvent(controller, 'error' as SseEventType, { message: error instanceof Error ? error.message : 'Unknown' });
+        controller.close();
+        log('error', 'Full report stream error', { error: error instanceof Error ? error.message : 'Unknown' });
+      }
+    },
+  });
+
+  return new Response(readable, { headers: SSE_HEADERS });
 }

@@ -1,42 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SearchClient, Config, HeaderUtils, LLMClient } from "coze-coding-dev-sdk";
+import { createLogger } from '@/lib/logger';
+import { pushSseEvent, type SseEventType } from '@/lib/sse';
+import { createStream, performSearch } from '@/lib/ai-client';
+import { readSseEvents } from '@/lib/sse-parser';
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// 服务端日志
-function log(level: 'info' | 'error', message: string, meta?: object) {
-  const timestamp = new Date().toISOString();
-  const logEntry = { timestamp, level, service: 'policy-search', message, ...meta };
-  if (level === 'error') {
-    console.error(JSON.stringify(logEntry));
-  } else {
-    console.log(JSON.stringify(logEntry));
-  }
-}
+const log = createLogger('policy-search');
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  
+
   try {
     const { query, searchType, timeRange, count } = await request.json();
 
-    // 参数验证
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       log('info', 'Invalid request: empty query');
-      return NextResponse.json(
-        { error: "请输入搜索关键词" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "请输入搜索关键词" }, { status: 400 });
     }
 
-    const queryLength = query.trim().length;
-    log('info', 'Policy search started', { queryLength, searchType, timeRange });
-
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const searchClient = new SearchClient(config, customHeaders);
-    const llmClient = new LLMClient(config, customHeaders);
+    log('info', 'Policy search started', { queryLength: query.trim().length, searchType, timeRange });
 
     // 构建增强查询
     let enhancedQuery = query;
@@ -46,21 +30,38 @@ export async function POST(request: NextRequest) {
       enhancedQuery = `${query} 行业动态 市场分析 发展趋势`;
     }
 
-    // 执行搜索
-    const searchResponse = await searchClient.advancedSearch(enhancedQuery, {
+    // 使用统一搜索客户端（自动选择 Coze SDK 或 fallback）
+    const searchResponse = await performSearch(request.headers, enhancedQuery, {
       count: count || 10,
       timeRange: timeRange || '3m',
       needSummary: true,
-      needContent: false,
-      needUrl: true,
     });
 
-    log('info', 'Search query executed', { 
-      resultsCount: searchResponse.web_items?.length || 0 
-    });
+    log('info', 'Search executed', { resultsCount: searchResponse.web_items?.length || 0 });
 
-    // 使用 LLM 智能聚合结果
-    const aggregationPrompt = `请帮我整理和归纳以下搜索结果，提取关键信息，按重要性排序：
+    // 统一 SSE 流
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          // event: search — 结构化搜索结果
+          pushSseEvent(controller, 'search' as SseEventType, {
+            summary: searchResponse.summary,
+            items: searchResponse.web_items?.slice(0, 10).map(item => ({
+              title: item.title,
+              url: item.url,
+              siteName: item.site_name,
+              snippet: item.snippet,
+              publishTime: item.publish_time,
+              authLevel: item.auth_info_level,
+              authDes: item.auth_info_des,
+            })) || [],
+          });
+
+          // event: summary — AI 聚合摘要（流式）
+          pushSseEvent(controller, 'summary' as SseEventType, { status: 'streaming' });
+
+          const aggregationPrompt = `请帮我整理和归纳以下搜索结果，提取关键信息，按重要性排序：
 
 搜索关键词：${query}
 
@@ -80,68 +81,45 @@ ${item.summary ? `AI摘要：${item.summary}` : ''}
 
 保持客观、专业，用中文输出。`;
 
-    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-      { role: "user", content: aggregationPrompt }
-    ];
+          const messages = [
+            { role: 'user' as const, content: aggregationPrompt },
+          ];
 
-    const summaryStream = llmClient.stream(messages, {
-      model: "doubao-seed-2-0-pro-260215",
-      temperature: 0.5,
-    });
+          const summaryStream = createStream(request.headers, messages, {
+            temperature: 0.5,
+          });
 
-    // 流式返回聚合结果
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        try {
-          // 先发送原始搜索结果
-          controller.enqueue(encoder.encode(`[SEARCH_RESULTS_START]${JSON.stringify({
-            summary: searchResponse.summary,
-            items: searchResponse.web_items?.slice(0, 10).map(item => ({
-              title: item.title,
-              url: item.url,
-              siteName: item.site_name,
-              snippet: item.snippet,
-              publishTime: item.publish_time,
-              authLevel: item.auth_info_level,
-              authDes: item.auth_info_des,
-            })) || []
-          })}[SEARCH_RESULTS_END]`));
-
-          // 再发送 AI 聚合摘要
-          controller.enqueue(encoder.encode(`\n\n[AI_SUMMARY_START]`));
-          
           for await (const chunk of summaryStream) {
             if (chunk.content) {
-              controller.enqueue(encoder.encode(chunk.content.toString()));
+              controller.enqueue(encoder.encode(chunk.content));
             }
           }
-          
-          controller.enqueue(encoder.encode(`[AI_SUMMARY_END]`));
+
+          // event: done
+          pushSseEvent(controller, 'done' as SseEventType, { type: 'done' });
           controller.close();
-          
-          const duration = Date.now() - startTime;
-          log('info', 'Policy search completed', { duration, queryLength });
+
+          log('info', 'Policy search completed', { duration: Date.now() - startTime });
         } catch (error) {
-          controller.error(error);
-          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
+          const errMsg = error instanceof Error ? error.message : 'Unknown';
+          pushSseEvent(controller, 'error' as SseEventType, { message: errMsg });
+          controller.close();
+          log('error', 'Stream error', { error: errMsg });
         }
       },
     });
 
     return new Response(readable, {
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
+        "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {
-    log('error', 'Policy search failed', { error: error instanceof Error ? error.message : 'Unknown' });
-    return NextResponse.json(
-      { error: "搜索服务暂时不可用，请稍后重试" },
-      { status: 500 }
-    );
+    const errMsg = error instanceof Error ? error.message : 'Unknown';
+    log('error', 'Policy search failed', { error: errMsg });
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }

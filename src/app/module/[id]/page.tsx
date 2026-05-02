@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { jsPDF } from 'jspdf';
-import { marked } from 'marked';
 import {
   ArrowLeft,
   Copy,
@@ -19,8 +17,13 @@ import {
 } from 'lucide-react';
 import { SmartInput } from '@/components/smart-input';
 import { ModuleGlyph } from '@/components/module-glyph';
+import { DocumentCheckPanel } from '@/components/document-check-panel';
+import { PolicySearchPanel } from '@/components/policy-search-panel';
+import { PptPanel } from '@/components/ppt-panel';
+import { ReportPanel } from '@/components/report-panel';
 import { BUILT_IN_MODULES, type AIModule } from '@/config/modules';
 import { getCustomModules } from '@/lib/module-manager';
+import { getAISettings } from '@/lib/ai-settings';
 import { cn, copyToClipboard, downloadTextFile } from '@/lib/utils';
 
 interface ChatMessage {
@@ -63,10 +66,23 @@ const tonePrompts: Record<ToneOption, string> = {
 
 const systemBasePrompt = '你是一个专业的办公助手，擅长商务写作，语气礼貌专业。';
 
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
+/** 异步 Markdown 渲染组件 - 按需加载 marked 库 */
+function MarkdownRenderer({ content }: { content: string }) {
+  const [html, setHtml] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    import('marked').then(({ marked }) => {
+      if (cancelled) return;
+      marked.setOptions({ breaks: true, gfm: true });
+      setHtml(marked.parse(content) as string);
+    });
+    return () => { cancelled = true; };
+  }, [content]);
+
+  if (!html) return <div className="text-slate-400">加载中...</div>;
+  return <div className="markdown-body text-sm leading-7" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
   return {
@@ -196,6 +212,12 @@ export default function ModulePage() {
     async (rawInput: string) => {
       if (!rawInput.trim() || !moduleData || isLoading) return;
 
+      const aiSettings = getAISettings();
+      if (!aiSettings.apiKey?.trim()) {
+        setError('请先在首页配置 AI 连接（API Key / Base URL / Model）。');
+        return;
+      }
+
       const appendedInput = selectedFile ? `${rawInput}\n\n[上传文件: ${selectedFile.name}]` : rawInput;
       const userMessage = createMessage('user', rawInput);
       const assistantMessage = createMessage('assistant', '');
@@ -213,8 +235,14 @@ export default function ModulePage() {
             moduleId: moduleData.id,
             systemPrompt: buildSystemPrompt(moduleData, tone),
             userInput: appendedInput,
-            temperature: moduleData.config?.temperature ?? 0.7,
-            maxTokens: moduleData.config?.maxTokens ?? 4096,
+            endpoint: aiSettings.endpoint,
+            apiKey: aiSettings.apiKey,
+            model: aiSettings.model,
+            providerName: aiSettings.providerName,
+            requestOptions: {
+              timeoutMs: 60000,
+              stream: true,
+            },
           }),
         });
 
@@ -304,17 +332,20 @@ export default function ModulePage() {
     );
   }, [lastAssistantMessage, moduleData]);
 
-  const handleExportWord = useCallback(() => {
+  const handleExportWord = useCallback(async () => {
     if (!lastAssistantMessage?.content || !moduleData) return;
+    const { marked } = await import('marked');
+    marked.setOptions({ breaks: true, gfm: true });
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${marked.parse(
       lastAssistantMessage.content
     )}</body></html>`;
     downloadTextFile(html, `${moduleData.id}-${Date.now()}.doc`, 'application/msword;charset=utf-8');
   }, [lastAssistantMessage, moduleData]);
 
-  const handleExportPdf = useCallback(() => {
+  const handleExportPdf = useCallback(async () => {
     if (!lastAssistantMessage?.content || !moduleData) return;
 
+    const { default: jsPDF } = await import('jspdf');
     const pdf = new jsPDF({
       unit: 'pt',
       format: 'a4',
@@ -351,11 +382,6 @@ export default function ModulePage() {
     setUserInput(record.input);
   }, []);
 
-  const renderMarkdown = useCallback((content: string) => {
-    const html = marked.parse(content) as string;
-    return { __html: html };
-  }, []);
-
   if (error && !moduleData) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -382,6 +408,26 @@ export default function ModulePage() {
         </div>
       </div>
     );
+  }
+
+  // 文档校验模块使用专用面板（结构化 DOCX 引擎，非 AI 聊天）
+  if (moduleId === 'document-check') {
+    return <DocumentCheckPanel moduleId={moduleId} />;
+  }
+
+  // 政策搜索模块使用专用面板（真实联网搜索 + 结果列表 + AI 聚合）
+  if (moduleId === 'policy-search') {
+    return <PolicySearchPanel moduleId={moduleId} />;
+  }
+
+  // PPT助手模块使用专用面板（大纲生成 + 预览 + .pptx 文件下载）
+  if (moduleId === 'ppt-helper') {
+    return <PptPanel moduleId={moduleId} />;
+  }
+
+  // 报告生成模块使用专用面板（模板系统 + 分章AI生成 + .docx导出）
+  if (moduleId === 'report-generate') {
+    return <ReportPanel moduleId={moduleId} />;
   }
 
   return (
@@ -582,11 +628,8 @@ export default function ModulePage() {
                       </div>
 
                       {message.role === 'assistant' ? (
-                        <div
-                          className="markdown-body text-sm leading-7"
-                          dangerouslySetInnerHTML={renderMarkdown(
-                            message.content || (isLoading ? '正在生成中...' : '')
-                          )}
+                        <MarkdownRenderer
+                          content={message.content || (isLoading ? '正在生成中...' : '')}
                         />
                       ) : (
                         <pre className="whitespace-pre-wrap font-sans text-sm leading-7">{message.content}</pre>

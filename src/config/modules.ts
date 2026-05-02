@@ -66,57 +66,14 @@ export const BUILT_IN_MODULES: AIModule[] = [
     id: 'document-check',
     name: '文档格式校验',
     icon: '📋',
-    description: '自动检查党政公文与商务文档格式合规性',
+    description: '上传 Word 文档，深度解析字体/字号/行距/页边距等格式属性，自动修复并导出修正版',
     category: 'built-in',
     color: 'blue',
-    inputTypes: ['text', 'document'],
-    placeholder: '请输入或粘贴文档内容进行格式校验...',
-    outputType: 'structured',
-    systemPrompt: `你是政府公文格式审核专家，遵循 GB/T 9704-2012 国家标准。
-
-请从以下维度检查文档格式：
-
-1. **标题格式**
-   - 发文机关名称
-   - "关于"字样
-   - 事由（需要干什么）
-   - 文种（如：请示、报告、通知等）
-
-2. **发文字号**
-   - 格式：发文机关代字〔年份〕序号号
-   - 示例：国办发〔2024〕1号
-
-3. **主送机关**
-   - 顶格书写
-   - 使用规范全称或规范化简称
-
-4. **正文结构**
-   - 一级：（一）
-   - 二级：1.
-   - 三级：（1）
-
-5. **附件标注**
-   - 右空一字标注"附件："
-   - 列出附件序号和名称
-
-6. **落款格式**
-   - 右对齐
-   - 包括单位名称和日期
-
-请返回 JSON 格式：
-{
-  "score": 85,
-  "passed": ["已通过的检查项"],
-  "issues": [
-    {
-      "type": "标题格式",
-      "severity": "error|warning|info",
-      "message": "问题描述",
-      "suggestion": "修改建议"
-    }
-  ],
-  "summary": "总体评价"
-}`,
+    inputTypes: ['document'],           // 仅支持文档上传
+    placeholder: '请上传需要校验的 .docx 文件...',
+    outputType: 'structured',            // 结构化校验报告 + 修正文件
+    systemPrompt: '',                    // 不再使用 AI prompt，由 docx 引擎直接处理
+    apiPath: '/api/document-check',      // 使用专用 API 路由
     order: 1,
   },
   {

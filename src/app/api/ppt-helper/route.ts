@@ -1,19 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { createLogger } from '@/lib/logger';
+import { pushSseEvent, type SseEventType } from '@/lib/sse';
+import { createStream } from '@/lib/ai-client';
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
-// 服务端日志
-function log(level: 'info' | 'error', message: string, meta?: object) {
-  const timestamp = new Date().toISOString();
-  const logEntry = { timestamp, level, service: 'ppt-helper', message, ...meta };
-  if (level === 'error') {
-    console.error(JSON.stringify(logEntry));
-  } else {
-    console.log(JSON.stringify(logEntry));
-  }
-}
+const log = createLogger('ppt-helper');
 
 const SYSTEM_PROMPT = `你是一位专业的PPT大纲设计专家，擅长将报告内容转化为结构清晰、逻辑合理的PPT演示文稿。
 
@@ -50,27 +43,25 @@ const SYSTEM_PROMPT = `你是一位专业的PPT大纲设计专家，擅长将报
 
 请直接输出JSON，不要添加任何额外说明。`;
 
+const SSE_HEADERS = {
+  "Content-Type": "text/event-stream; charset=utf-8",
+  "Cache-Control": "no-cache",
+  "Connection": "keep-alive",
+  "X-Accel-Buffering": "no",
+};
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  
+
   try {
     const { content, pptTitle, style } = await request.json();
 
-    // 参数验证
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
       log('info', 'Invalid request: empty content');
-      return NextResponse.json(
-        { error: "请提供需要转换的报告内容" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "请提供需要转换的报告内容" }, { status: 400 });
     }
 
-    const contentLength = content.trim().length;
-    log('info', 'PPT generation started', { contentLength, pptTitle, style });
-
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const client = new LLMClient(config, customHeaders);
+    log('info', 'PPT generation started', { contentLength: content.trim().length, pptTitle, style });
 
     const styleContext = style === 'formal'
       ? '风格：正式商务风格，适合政府汇报、企业汇报'
@@ -88,50 +79,60 @@ ${content}
 
 请生成一个结构清晰、适合演示的PPT大纲，每页控制在3-5个要点以内。`;
 
-    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    const messages: Array<{ role: "system" | "user"; content: string }> = [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: prompt }
+      { role: "user", content: prompt },
     ];
 
-    // 使用流式输出
-    const stream = client.stream(messages, {
-      model: "doubao-seed-2-0-pro-260215",
-      temperature: 0.5,
-    });
-
+    // 统一 SSE 流输出 — 使用 createStream 自动选择 AI Provider
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
         try {
+          pushSseEvent(controller, 'outline' as SseEventType, { status: 'streaming' });
+
+          let rawText = '';
+          const stream = createStream(request.headers, messages, {
+            model: "doubao-seed-2-0-pro-260215",
+            temperature: 0.5,
+          });
+
           for await (const chunk of stream) {
             if (chunk.content) {
-              controller.enqueue(encoder.encode(chunk.content.toString()));
+              const text = chunk.content;
+              rawText += text;
+              controller.enqueue(encoder.encode(text));
             }
           }
+
+          // 尝试解析完整的大纲 JSON
+          let parsedOutline = null;
+          try {
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              parsedOutline = JSON.parse(jsonMatch[0]);
+            }
+          } catch {
+            // 解析失败，客户端会处理原始文本
+          }
+
+          pushSseEvent(controller, 'done' as SseEventType, { type: 'done', parsedOutline });
           controller.close();
-          
-          const duration = Date.now() - startTime;
-          log('info', 'PPT generation completed', { duration, contentLength });
+
+          log('info', 'PPT generation completed', { duration: Date.now() - startTime });
         } catch (error) {
-          controller.error(error);
-          log('error', 'Stream error', { error: error instanceof Error ? error.message : 'Unknown' });
+          const errMsg = error instanceof Error ? error.message : 'Unknown';
+          pushSseEvent(controller, 'error' as SseEventType, { message: errMsg });
+          controller.close();
+          log('error', 'Stream error', { error: errMsg });
         }
       },
     });
 
-    return new Response(readable, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      },
-    });
+    return new Response(readable, { headers: SSE_HEADERS });
   } catch (error) {
-    log('error', 'PPT generation failed', { error: error instanceof Error ? error.message : 'Unknown' });
-    return NextResponse.json(
-      { error: "PPT生成服务暂时不可用，请稍后重试" },
-      { status: 500 }
-    );
+    const errMsg = error instanceof Error ? error.message : 'Unknown';
+    log('error', 'PPT generation failed', { error: errMsg });
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }
