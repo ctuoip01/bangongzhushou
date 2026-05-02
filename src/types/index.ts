@@ -34,7 +34,7 @@ export interface SearchResult {
   authDes: string;
 }
 
-export type SearchType = 'all' | 'policy' | 'industry';
+export type SearchType = 'all' | 'policy' | 'industry' | 'shanghai';
 export type TimeRange = '1m' | '3m' | '6m' | '1y';
 
 export interface PolicySearchResponse {

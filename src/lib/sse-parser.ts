@@ -31,12 +31,16 @@ export function parseSseBuffer(buffer: string): { events: SseParsedEvent[]; rema
       if (line.startsWith('event:')) {
         eventType = line.slice(6).trim();
       } else if (line.startsWith('data:')) {
+        const rawData = line.slice(5).trim();
+        // 尝试 JSON 解析
         try {
-          const data = JSON.parse(line.slice(5).trim());
+          const data = JSON.parse(rawData);
           events.push({ type: eventType || 'message', data });
         } catch {
-          // 非 JSON 数据作为纯文本
-          events.push({ type: eventType || 'content', data: line.slice(5).trim() });
+          // 非 JSON 数据作为纯文本（兼容旧格式裸文本）
+          if (rawData) {
+            events.push({ type: eventType || 'content', data: rawData });
+          }
         }
       }
     }

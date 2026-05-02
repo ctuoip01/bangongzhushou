@@ -114,17 +114,35 @@ export function PolicySearchPanel({ moduleId }: PolicySearchPanelProps) {
             setRawResults(payload as unknown as { items: SearchResult[]; summary?: string });
             setSearching(false);
           }
+        } else if (event === 'summary_chunk') {
+          // AI 聚合摘要（JSON 包装的文本片段）
+          if (typeof data === 'object' && data !== null && 'text' in data) {
+            summaryText += (data as { text: string }).text;
+          }
+          setStreamingText(summaryText);
         } else if (event === 'summary' || event === 'raw' || !event) {
-          // AI 聚合摘要（文本片段或原始文本）
+          // 兼容旧格式：裸文本或原始文本
           if (typeof data === 'string') {
             summaryText += data;
           } else if (typeof data === 'object' && data !== null && 'status' in data) {
-            // status: streaming 标记，忽略
+            // status 标记，忽略
             continue;
           }
           setStreamingText(summaryText);
         } else if (event === 'done') {
           // 流结束
+          break;
+        } else if (event === 'error') {
+          const errorMsg = (typeof data === 'object' && data !== null && 'message' in data)
+            ? (data as { message: string }).message
+            : String(data);
+          console.error('[policy-search] SSE error:', errorMsg);
+          // AI 摘要失败时仍保留已收到的搜索结果，仅提示用户
+          if (!rawResults) {
+            setAiSummary(`搜索过程出现错误：${errorMsg || '未知错误'}`);
+          } else {
+            setAiSummary(prev => prev || `（AI 聚合分析暂时不可用：${errorMsg?.slice(0, 80) || '未知'}。以上搜索结果仍可正常查看。）`);
+          }
           break;
         }
       }
@@ -181,6 +199,7 @@ export function PolicySearchPanel({ moduleId }: PolicySearchPanelProps) {
               <TabsTrigger value="all" className="text-xs px-3 h-7">全部</TabsTrigger>
               <TabsTrigger value="policy" className="text-xs px-3 h-7">政策文件</TabsTrigger>
               <TabsTrigger value="industry" className="text-xs px-3 h-7">行业动态</TabsTrigger>
+              <TabsTrigger value="shanghai" className="text-xs px-3 h-7">🏙 上海地区</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -233,7 +252,7 @@ export function PolicySearchPanel({ moduleId }: PolicySearchPanelProps) {
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
             <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-            <p className="text-sm text-muted-foreground">正在联网检索{searchType === 'policy' ? '政策文件' : searchType === 'industry' ? '行业动态' : '相关内容'}...</p>
+            <p className="text-sm text-muted-foreground">正在联网检索{searchType === 'policy' ? '政策文件' : searchType === 'industry' ? '行业动态' : searchType === 'shanghai' ? '上海地区政策' : '相关内容'}...</p>
           </div>
         </div>
       )}
@@ -247,7 +266,7 @@ export function PolicySearchPanel({ moduleId }: PolicySearchPanelProps) {
             <span>条结果</span>
             {searchType !== 'all' && (
               <Badge variant="secondary" className="ml-1 text-xs">
-                {searchType === 'policy' ? '政策文件' : '行业动态'}
+                {searchType === 'policy' ? '政策文件' : searchType === 'industry' ? '行业动态' : '上海地区政策'}
               </Badge>
             )}
             {timeRange !== '3m' && (

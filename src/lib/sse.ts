@@ -23,6 +23,8 @@ export type SseEventType =
   | 'content'
   | 'search'
   | 'summary'
+  | 'summary_chunk'   // AI 聚合摘要的流式文本片段（JSON 包装）
+  | 'status'          // 状态通知（如开始聚合）
   | 'outline'
   | 'chapter'
   | 'progress'

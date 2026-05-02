@@ -4,26 +4,28 @@
  * 支持的 Provider：
  *   ┌──────────────────────────────────────────────┐
  *   │ LLM Provider                                  │
- *   │  puter     — 免费 Google AI (Gemini/Gemma)    │
  *   │  siliconflow — 国内免费聚合 (DeepSeek/Qwen等) │
- *   │  openai    — OpenAI 官方                      │
- *   │  deepseek  — DeepSeek 官方                    │
- *   │  coze      — Coze 沙箱 (豆包)                 │
- *   │  custom    — 用户自填任意 OpenAI 兼容 API       │
+ *   │  gemini     — Google Gemini REST API (免费)    │
+ *   │  puter      — Puter.js (仅浏览器端)            │
+ *   │  openai     — OpenAI 官方                      │
+ *   │  deepseek   — DeepSeek 官方                    │
+ *   │  coze       — Coze 沙箱 (豆包)                 │
+ *   │  custom     — 用户自填任意 OpenAI 兼容 API       │
  *   ├──────────────────────────────────────────────┤
  *   │ Search Provider                               │
+ *   │  bing       — Azure Bing Search (国内可用)     │
  *   │  duckduckgo — 免费，无需 Key                  │
- *   │  tavily    — 推荐，1000次/月免费              │
- *   │  coze      — Coze 沙箱联网搜索                │
+ *   │  tavily     — 推荐，1000次/月免费              │
+ *   │  coze       — Coze 沙箱联网搜索                │
  *   └──────────────────────────────────────────────┘
  *
  * 环境变量：
- *   AI_PROVIDER        : puter | siliconflow | openai | deepseek | coze | custom
- *   AI_API_KEY         : API 密钥（puter 不需要）
- *   AI_BASE_URL        : 自定义 Base URL（custom 模式必须）
+ *   AI_PROVIDER        : siliconflow | gemini | puter | openai | deepseek | coze | custom
+ *   AI_API_KEY         : API 密钥（gemini/puter 不需要特殊 key，需 Google AI Studio Key）
+ *   AI_BASE_URL        : 自定义 Base URL（custom/gemini 模式可配）
  *   AI_MODEL           : 模型名称
- *   SEARCH_PROVIDER    : duckduckgo | tavily | coze
- *   SEARCH_API_KEY     : 搜索 API 密钥（duckduckgo 不需要）
+ *   SEARCH_PROVIDER    : bing | duckduckgo | tavily | coze
+ *   SEARCH_API_KEY     : 搜索 API 密钥（bing 需要，duckduckgo 不需要）
  */
 
 // ════════════════════════════════════════════════════
@@ -50,8 +52,8 @@ export interface SearchResponse {
   web_items: SearchResultItem[];
 }
 
-export type LLMProvider = 'puter' | 'siliconflow' | 'openai' | 'deepseek' | 'coze' | 'custom';
-export type SearchProvider = 'duckduckgo' | 'tavily' | 'coze';
+export type LLMProvider = 'siliconflow' | 'gemini' | 'puter' | 'openai' | 'deepseek' | 'coze' | 'custom';
+export type SearchProvider = 'baidu' | 'bing' | 'duckduckgo' | 'tavily' | 'coze';
 
 /** Provider 配置描述 */
 export interface ProviderInfo {
@@ -82,27 +84,10 @@ export interface SearchProviderInfo {
 // ════════════════════════════════════════════════════
 
 export const LLM_PROVIDERS: Record<string, ProviderInfo> = {
-  puter: {
-    id: 'puter',
-    name: 'Puter.js (Google AI)',
-    description: '免费无限使用 Google Gemini / Gemma 系列，无需 API Key',
-    needApiKey: false,
-    needBaseUrl: false,
-    defaultModel: 'google/gemini-2.5-flash',
-    recommendedModels: [
-      { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', free: true },
-      { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', free: true },
-      { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', free: true },
-      { id: 'google/gemma-3-27b-it', name: 'Gemma 3 27B', free: true },
-      { id: 'google/gemma-4-31b-it', name: 'Gemma 4 31B', free: true },
-    ],
-    free: true,
-    signupUrl: 'https://developer.puter.com/',
-  },
   siliconflow: {
     id: 'siliconflow',
     name: 'SiliconFlow (硅基流动)',
-    description: '国内大模型聚合平台，DeepSeek/Qwen/GLM 等，注册送额度',
+    description: '国内大模型聚合平台，DeepSeek/Qwen/GLM 等，注册送额度，服务端可用',
     needApiKey: true,
     needBaseUrl: false,
     defaultModel: 'deepseek-ai/DeepSeek-V3',
@@ -115,6 +100,21 @@ export const LLM_PROVIDERS: Record<string, ProviderInfo> = {
     ],
     free: true,
     signupUrl: 'https://cloud.siliconflow.cn',
+  },
+  gemini: {
+    id: 'gemini',
+    name: 'Google Gemini (REST API)',
+    description: 'Google AI Studio 免费 API，走标准 HTTP 接口，服务端可用（推荐）',
+    needApiKey: true,
+    needBaseUrl: false,
+    defaultModel: 'gemini-2.5-flash',
+    recommendedModels: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', free: true },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', free: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', free: true },
+    ],
+    free: true,
+    signupUrl: 'https://aistudio.google.com/apikey',
   },
   openai: {
     id: 'openai',
@@ -172,6 +172,21 @@ export const LLM_PROVIDERS: Record<string, ProviderInfo> = {
 };
 
 export const SEARCH_PROVIDERS: Record<string, SearchProviderInfo> = {
+  baidu: {
+    id: 'baidu',
+    name: '百度搜索',
+    description: '百度移动端搜索（m.baidu.com），完全免费无需Key，国内稳定，返回真实网页结果',
+    needApiKey: false,
+    free: true,
+  },
+  bing: {
+    id: 'bing',
+    name: 'Azure Bing Search',
+    description: '微软 Bing 搜索 API，国内可访问，每月 1000 次免费',
+    needApiKey: true,
+    free: true,
+    signupUrl: 'https://portal.azure.com/#create/Microsoft.BingSearch',
+  },
   duckduckgo: {
     id: 'duckduckgo',
     name: 'DuckDuckGo',
@@ -209,8 +224,9 @@ function getLLMProvider(): LLMProvider {
   const raw = getEnv('AI_PROVIDER') || '';
   // 兼容旧值映射
   const map: Record<string, LLMProvider> = {
-    openai: 'openai',
     siliconflow: 'siliconflow',
+    gemini: 'gemini',
+    openai: 'openai',
     puter: 'puter',
     deepseek: 'deepseek',
     coze: 'coze',
@@ -218,12 +234,14 @@ function getLLMProvider(): LLMProvider {
     kimi: 'custom',
     zhipu: 'custom',
   };
-  return map[raw] || 'puter'; // 默认用 Puter（零配置免费）
+  return map[raw] || 'siliconflow'; // 默认用 SiliconFlow（国内可用，服务端稳定）
 }
 
 /** 获取当前搜索 Provider */
 function getSearchProvider(): SearchProvider {
   const sp = getEnv('SEARCH_PROVIDER');
+  if (sp === 'baidu') return 'baidu';
+  if (sp === 'bing') return 'bing';
   if (sp === 'tavily') return 'tavily';
   if (sp === 'coze') return 'coze';
   return 'duckduckgo';
@@ -242,6 +260,7 @@ function resolveLLMConfig(options?: { model?: string }) {
     // 使用预设 URL
     const presetUrls: Partial<Record<LLMProvider, string>> = {
       siliconflow: 'https://api.siliconflow.cn/v1',
+      gemini: 'https://generativelanguage.googleapis.com/v1beta',
       openai: 'https://api.openai.com/v1',
       deepseek: 'https://api.deepseek.com/v1',
     };
@@ -258,7 +277,85 @@ function resolveLLMConfig(options?: { model?: string }) {
 }
 
 // ════════════════════════════════════════════════════
-//  Provider 实现：Puter.js（免费 Google AI）
+//  Provider 实现：Google Gemini REST API（服务端可用）
+// ════════════════════════════════════════════════════
+
+async function* geminiStream(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  config: { apiKey: string; baseUrl: string; model: string; temperature?: number },
+): AsyncGenerator<StreamChunk> {
+  if (!config.apiKey) {
+    throw new Error(
+      'Google Gemini 需要 API Key。\n\n' +
+      `请设置环境变量 AI_API_KEY。\n` +
+      `免费申请：https://aistudio.google.com/apikey\n\n` +
+      `或切换到 SiliconFlow（AI_PROVIDER=siliconflow），国内更稳定。`,
+    );
+  }
+
+  const model = config.model || 'gemini-2.5-flash';
+  const baseUrl = (config.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+
+  // 将 OpenAI 格式 messages 转为 Gemini 格式
+  const contents = messages
+    .filter(m => m.role !== 'system')
+    .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+
+  // system instruction 单独提取
+  const sysInstruction = messages.find(m => m.role === 'system')?.content;
+
+  const url = `${baseUrl}/models/${model}:streamGenerateContent?key=${config.apiKey}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents,
+      ...(sysInstruction ? { systemInstruction: { parts: [{ text: sysInstruction }] } } : {}),
+      generationConfig: {
+        temperature: config.temperature ?? 0.7,
+        maxOutputTokens: 8192,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Gemini API 请求失败 (${res.status}): ${errText.slice(0, 300)}`);
+  }
+  if (!res.body) throw new Error('Gemini API 未返回响应流');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // Gemini 返回的是 JSON 数组，每行一个对象
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('[') && !trimmed.endsWith(']')) continue;
+        try {
+          // 可能是数组片段，尝试解析
+          const parsed = JSON.parse(trimmed.replace(/^\[|\]$/g, ''));
+          const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) yield { content: text };
+        } catch {
+          // 忽略非 JSON 行
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ════════════════════════════════════════════════════
+//  Provider 实现：Puter.js（仅浏览器端可用）
 // ════════════════════════════════════════════════════
 
 async function* puterStream(
@@ -399,6 +496,206 @@ async function* cozeSDKStream(
   for await (const chunk of stream) {
     if (chunk.content) yield { content: chunk.content.toString() };
   }
+}
+
+// ════════════════════════════════════════════════════
+//  搜索实现：Azure Bing Search（国内可用）
+// ════════════════════════════════════════════════════
+
+async function bingSearch(query: string, opts?: { count?: number }): Promise<SearchResponse> {
+  const apiKey = getEnv('SEARCH_API_KEY') || getEnv('BING_API_KEY');
+  if (!apiKey) {
+    throw new Error(
+      'Bing 搜索未配置。请设置环境变量:\n' +
+      '  SEARCH_PROVIDER=bing\n' +
+      '  SEARCH_API_KEY=你的Bing API Key\n\n' +
+      '免费申请步骤：\n' +
+      '1. 访问 https://portal.azure.com/\n' +
+      '2. 搜索 "Bing Search" 资源并创建\n' +
+      '3. 在资源中获取 API Key（每月 1000 次免费）\n' +
+      '4. 参考: https://portal.azure.com/#create/Microsoft.BingSearch',
+    );
+  }
+
+  const count = Math.min(opts?.count || 10, 50);
+  const encodedQuery = encodeURIComponent(query);
+
+  const res = await fetch(
+    `https://api.bing.microsoft.com/v7.0/search?q=${encodedQuery}&count=${count}&mkt=zh-CN&setlang=zh-Hans`,
+    {
+      headers: { 'Ocp-Apim-Subscription-Key': apiKey },
+    },
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Bing 搜索失败 (${res.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    webPages?: {
+      value?: Array<{
+        name: string;
+        url: string;
+        snippet: string;
+        dateLastCrawled?: string;
+        displayUrl?: string;
+      }>;
+    };
+  };
+
+  const items = (data.webPages?.value || []).map(item => ({
+    title: item.name || '',
+    url: item.url || '',
+    site_name: extractDomain(item.url),
+    snippet: item.snippet?.slice(0, 300) || '',
+    publish_time: item.dateLastCrawled || '',
+    auth_info_level: inferAuthLevel(item.url),
+    auth_info_des: '',
+  }));
+
+  return {
+    summary: items.length > 0 ? `找到 ${items.length} 条相关结果` : '未找到相关结果',
+    web_items: items,
+  };
+}
+
+// ════════════════════════════════════════════════════
+//  搜索实现：百度移动端搜索（免费、国内稳定）
+// ════════════════════════════════════════════════════
+
+/**
+ * 百度移动端搜索 (m.baidu.com)
+ *
+ * 直接请求百度搜索结果页 HTML，从中解析出真实搜索结果
+ * （标题、URL、摘要），而非仅返回联想词。
+ *
+ * 特点：完全免费、无需 Key、国内官方接口、返回真实网页结果
+ */
+async function baiduSearch(query: string, opts?: { count?: number }): Promise<SearchResponse> {
+  const count = Math.min(opts?.count || 10, 20);
+  const encodedQuery = encodeURIComponent(query);
+
+  // 使用百度移动端搜索页（HTML 结构简单，易解析，且对服务端爬虫友好）
+  const url = `https://m.baidu.com/s?word=${encodedQuery}&rn=${count}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000); // 百度可能稍慢
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://m.baidu.com/',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      throw new Error(`百度搜索返回状态 ${res.status}`);
+    }
+
+    const html = await res.text();
+
+    if (!html || html.length < 500) {
+      throw new Error('百度搜索响应为空');
+    }
+
+    // 解析百度移动端搜索结果的 HTML 结构
+    // 典型结构：<div class="c-result"><div class="c-abstract">...<a href="...">...</a></div>...
+    const items = parseBaiduResults(html, count);
+    console.log(`[baidu] 解析到 ${items.length} 条真实搜索结果`);
+
+    return {
+      summary: items.length > 0 ? `百度搜索找到 ${items.length} 条相关结果` : `百度未找到"${query}"相关结果`,
+      web_items: items,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    if ((err as Error)?.name === 'AbortError') {
+      throw new Error('百度搜索请求超时（10秒）');
+    }
+    throw err;
+  }
+}
+
+/**
+ * 解析百度移动端搜索结果页 HTML
+ *
+ * 匹配模式（按优先级）：
+ *   1. <div class="result ..."> 容器 → 内部提取标题(a)、摘要、来源
+ *   2. <div class="c-result ..."> 备选容器
+ */
+function parseBaiduResults(html: string, maxCount: number): SearchResultItem[] {
+  const items: SearchResultItem[] = [];
+  const seen = new Set<string>();
+
+  // 百度移动端搜索结果的主要容器模式
+  const resultPatterns = [
+    // 标准 result 容器 + 标题 a 标签
+    /<div[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]{50,3000}?)<\/div>\s*(?=<div\s|<\/body|$)/gi,
+    // c-result 容器
+    /<div[^>]*class="[^"]*c-result[^"]*"[^>]*>([\s\S]{50,2000}?)<\/div>\s*(?=<div\s|<\/body|$)/gi,
+  ];
+
+  for (const re of resultPatterns) {
+    if (items.length >= maxCount) break;
+    re.lastIndex = 0;
+    let blockMatch;
+    while ((blockMatch = re.exec(html)) !== null && items.length < maxCount) {
+      const block = blockMatch[1];
+
+      // 从结果块中提取标题和链接
+      const titleLinkMatch = block.match(/<a[^>]+href="([^"]*)"[^>]*>([\s\S]{2,120}?)(?=<\/a><\/span>|<\/a>)/i);
+      if (!titleLinkMatch) continue;
+
+      const rawUrl = titleLinkMatch[1];
+      const rawTitle = titleLinkMatch[2].replace(/<[^>]+>/g, '').trim();
+      if (!rawTitle || rawTitle.length < 3 || seen.has(rawUrl)) continue;
+
+      // 提取摘要文本（通常在 c-abstract 或 c-font-normal 类中）
+      const abstractPatterns = [
+        /<div[^>]*class="[^"]*(?:abstract|content)[^"]*"[^>]*>([\s\S]{10,400}?)<\/div>/i,
+        /<span[^>]*class="[^"]*(?:text-color|content-right_)[^"]*"[^>]*>([\s\S]{10,300}?)<\/span>/i,
+        /<p[^>]*>([\s\S]{15,300}?)<\/p>/i,
+      ];
+      let snippet = '';
+      for (const apRe of abstractPatterns) {
+        const am = block.match(apRe);
+        if (am) { snippet = am[1].replace(/<[^>]+>/g, '').trim(); break; }
+      }
+
+      // 提取来源名称
+      const sourceMatch = block.match(/(?:来自|来源)[:\s]*([^\s<>]{2,30})|class="[^"]*source-name[^"]*"[^>]*>([^<]+)/i);
+      const sourceName = sourceMatch
+        ? (sourceMatch[1] || sourceMatch[2]).trim()
+        : extractDomain(rawUrl) || '百度';
+
+      // 清理 URL（百度可能有重定向链接）
+      let finalUrl = rawUrl;
+      const realUrlMatch = rawUrl.match(/[&?]url=([^&\s]*)/) || rawUrl.match(/[&?]srcurl=(https?[^&\s]*)/);
+      if (realUrlMatch) {
+        try { finalUrl = decodeURIComponent(realUrlMatch[1]); } catch { /* use original */ }
+      }
+
+      seen.add(finalUrl);
+      items.push({
+        title: rawTitle.slice(0, 100),
+        url: finalUrl.startsWith('http') ? finalUrl : `https:${finalUrl}`,
+        site_name: sourceName,
+        snippet: snippet.slice(0, 300),
+        publish_time: '',
+        auth_info_level: inferAuthLevel(finalUrl),
+        auth_info_des: '',
+      });
+    }
+  }
+
+  return items;
 }
 
 // ════════════════════════════════════════════════════
@@ -622,6 +919,14 @@ export function createStream(
   const temperature = options?.temperature ?? 0.7;
 
   switch (config.provider) {
+    case 'gemini':
+      return geminiStream(messages, {
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        temperature,
+      });
+
     case 'puter':
       return puterStream(messages, { ...options, model: config.model, temperature });
 
@@ -645,7 +950,7 @@ export function createStream(
 /**
  * 执行联网搜索
  * 自动根据 SEARCH_PROVIDER 选择搜索引擎
- * 内置多重 fallback：Tavily → DuckDuckGo（多镜像）→ LLM 兜底
+ * 内置多重 fallback：Bing → DuckDuckGo（多镜像）→ LLM 兜底
  */
 export async function performSearch(
   requestHeaders: Headers,
@@ -655,30 +960,71 @@ export async function performSearch(
   const sp = getSearchProvider();
   const count = opts?.count || 10;
 
+  // ─── 诊断日志：记录搜索入口信息 ───
+  console.log(`[performSearch] provider=${sp}, query="${query.slice(0, 50)}", count=${count}`);
+
   // 策略 1：用户指定的搜索引擎
   try {
+    let result: SearchResponse;
+
     switch (sp) {
-      case 'tavily': return await tavilySearch(query, opts);
-      case 'coze': return await cozeSearch(requestHeaders, query, opts);
+      case 'baidu':
+        console.log('[performSearch] → trying baiduSearch...');
+        result = await baiduSearch(query, opts);
+        console.log(`[performSearch] baiduSearch OK: ${result.web_items?.length || 0} items`);
+        return result;
+      case 'bing':
+        console.log('[performSearch] → trying bingSearch...');
+        result = await bingSearch(query, opts);
+        console.log(`[performSearch] bingSearch OK: ${result.web_items?.length || 0} items`);
+        return result;
+      case 'tavily':
+        console.log('[performSearch] → trying tavilySearch...');
+        result = await tavilySearch(query, opts);
+        console.log(`[performSearch] tavilySearch OK: ${result.web_items?.length || 0} items`);
+        return result;
+      case 'coze':
+        console.log('[performSearch] → trying cozeSearch...');
+        result = await cozeSearch(requestHeaders, query, opts);
+        console.log(`[performSearch] cozeSearch OK: ${result.web_items?.length || 0} items`);
+        return result;
       case 'duckduckgo':
-      default: return await duckduckgoSearch(query, opts);
+      default:
+        console.log('[performSearch] → trying duckduckgoSearch...');
+        result = await duckduckgoSearch(query, opts);
+        console.log(`[performSearch] duckduckgoSearch OK: ${result.web_items?.length || 0} items`);
+        return result;
     }
   } catch (primaryErr) {
+    const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+    console.error(`[performSearch] 主引擎(${sp})失败:`, errMsg);
+
     // 如果不是 DDG，且主搜索失败 → 尝试 DDG 作为 fallback
     if (sp !== 'duckduckgo') {
       try {
-        return await duckduckgoSearch(query, opts);
-      } catch { /* DDG 也失败，继续走 LLM 兜底 */ }
+        console.log('[performSearch] → fallback to duckduckgoSearch...');
+        const ddgResult = await duckduckgoSearch(query, opts);
+        console.log(`[performSearch] duckduckgo fallback OK: ${ddgResult.web_items?.length || 0} items`);
+        return ddgResult;
+      } catch (ddgErr) {
+        console.error(`[performSearch] DuckDuckGo fallback 也失败:`, ddgErr instanceof Error ? ddgErr.message : String(ddgErr));
+        /* DDG 也失败，继续走 LLM 兜底 */
+      }
     }
 
     // 策略 2：LLM 兜底生成
     try {
-      return await llmSearchFallback(requestHeaders, query, { count });
+      console.log('[performSearch] → fallback to llmSearchFallback...');
+      console.log(`[performSearch] LLM Provider=${getLLMProvider()}, hasApiKey=${!!getEnv('AI_API_KEY')}`);
+      const llmResult = await llmSearchFallback(requestHeaders, query, { count });
+      console.log(`[performSearch] llmSearchFallback OK: ${llmResult.web_items?.length || 0} items`);
+      return llmResult;
     } catch (llmErr) {
+      const llmErrMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+      console.error(`[performSearch] LLM 兜底也失败:`, llmErrMsg);
       // 所有策略都失败了，返回原始错误
       throw new Error(
-        `${primaryErr instanceof Error ? primaryErr.message : String(primaryErr)}\n\n` +
-        `LLM 兜底也失败: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`
+        `${errMsg}\n\nLLM 兜底也失败: ${llmErrMsg}`
       );
     }
   }
